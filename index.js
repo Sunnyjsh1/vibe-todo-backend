@@ -69,14 +69,16 @@ const mongooseOptions = {
 // TLS는 기본적으로 활성화되므로 명시적으로 설정하지 않음
 // (URI에 이미 포함되어 있음)
 
-mongoose.connect(MONGODB_URI, mongooseOptions)
-  .then(() => {
+// MongoDB 연결 함수
+async function connectMongoDB() {
+  try {
+    await mongoose.connect(MONGODB_URI, mongooseOptions);
     console.log('✅ MongoDB 연결성공');
     if (process.env.NODE_ENV !== 'production') {
       console.log(`연결 URI: ${MONGODB_URI.replace(/\/\/.*@/, '//***:***@')}`);
     }
-  })
-  .catch((error) => {
+    return true;
+  } catch (error) {
     console.error('❌ MongoDB 연결 실패:', error.message);
     console.error('에러 코드:', error.code);
     if (process.env.NODE_ENV !== 'production') {
@@ -95,21 +97,12 @@ mongoose.connect(MONGODB_URI, mongooseOptions)
       console.error('   3. 연결 문자열이 올바른지 확인');
     }
     
-    console.error('⚠️  서버는 계속 실행되지만 MongoDB 연결이 필요합니다.');
-    console.error('⚠️  환경 변수 MONGODB_URI가 올바르게 설정되어 있는지 확인하세요.');
-    
-    // 연결 재시도 (30초 후)
-    setTimeout(() => {
-      console.log('🔄 MongoDB 연결 재시도 중...');
-      mongoose.connect(MONGODB_URI, mongooseOptions)
-        .then(() => {
-          console.log('✅ MongoDB 재연결 성공');
-        })
-        .catch((retryError) => {
-          console.error('❌ 재연결 실패:', retryError.message);
-        });
-    }, 30000);
-  });
+    return false;
+  }
+}
+
+// 초기 연결 시도
+connectMongoDB();
 
 // MongoDB 연결 이벤트 리스너
 mongoose.connection.on('connected', () => {
@@ -117,12 +110,28 @@ mongoose.connection.on('connected', () => {
 });
 
 mongoose.connection.on('error', (err) => {
-  console.error('❌ MongoDB 연결 에러:', err);
+  console.error('❌ MongoDB 연결 에러:', err.message);
+  console.error('에러 코드:', err.code);
 });
 
 mongoose.connection.on('disconnected', () => {
-  console.warn('⚠️  MongoDB 연결 끊김');
+  console.warn('⚠️  MongoDB 연결 끊김 - 재연결 시도 중...');
+  // 연결이 끊어지면 자동으로 재연결 시도
+  setTimeout(() => {
+    if (mongoose.connection.readyState === 0) {
+      console.log('🔄 MongoDB 자동 재연결 시도...');
+      connectMongoDB();
+    }
+  }, 5000); // 5초 후 재시도
 });
+
+// 주기적으로 연결 상태 확인 및 재연결 시도 (1분마다)
+setInterval(() => {
+  if (mongoose.connection.readyState === 0) {
+    console.log('🔄 MongoDB 연결 끊김 감지 - 재연결 시도...');
+    connectMongoDB();
+  }
+}, 60000); // 60초마다 확인
 
 // MongoDB 연결 상태 확인 함수
 function getMongoDBStatus() {
