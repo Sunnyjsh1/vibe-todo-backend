@@ -31,9 +31,26 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // MongoDB 연결
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/todo';
+// URI에 데이터베이스 이름이 없으면 자동으로 추가
+let MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/todo';
 
-mongoose.connect(MONGODB_URI)
+// URI가 /로 끝나면 데이터베이스 이름 추가
+if (MONGODB_URI.endsWith('/')) {
+  MONGODB_URI = MONGODB_URI + 'todo';
+} else if (!MONGODB_URI.includes('/') || MONGODB_URI.split('/').length < 4) {
+  // 데이터베이스 이름이 없는 경우
+  if (!MONGODB_URI.endsWith('todo')) {
+    MONGODB_URI = MONGODB_URI.endsWith('/') ? MONGODB_URI + 'todo' : MONGODB_URI + '/todo';
+  }
+}
+
+// MongoDB 연결 옵션
+const mongooseOptions = {
+  serverSelectionTimeoutMS: 5000, // 5초 타임아웃
+  socketTimeoutMS: 45000,
+};
+
+mongoose.connect(MONGODB_URI, mongooseOptions)
   .then(() => {
     console.log('✅ MongoDB 연결성공');
     if (process.env.NODE_ENV !== 'production') {
@@ -44,11 +61,24 @@ mongoose.connect(MONGODB_URI)
     console.error('❌ MongoDB 연결 실패:', error.message);
     if (process.env.NODE_ENV !== 'production') {
       console.error('연결 URI:', MONGODB_URI.replace(/\/\/.*@/, '//***:***@'));
+      console.error('전체 에러:', error);
     }
-    // Heroku에서는 즉시 종료하지 않고 서버는 계속 실행
-    // (MongoDB 연결은 나중에 재시도 가능)
     console.error('⚠️  서버는 계속 실행되지만 MongoDB 연결이 필요합니다.');
+    console.error('⚠️  환경 변수 MONGODB_URI가 올바르게 설정되어 있는지 확인하세요.');
   });
+
+// MongoDB 연결 이벤트 리스너
+mongoose.connection.on('connected', () => {
+  console.log('✅ MongoDB 연결됨');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('❌ MongoDB 연결 에러:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('⚠️  MongoDB 연결 끊김');
+});
 
 // MongoDB 연결 상태 확인 함수
 function getMongoDBStatus() {

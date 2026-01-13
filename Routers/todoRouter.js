@@ -6,6 +6,15 @@ const Todo = require('../models/Todo');
 // 할일 목록 조회 라우터
 router.get('/todos', async (req, res) => {
   try {
+    // MongoDB 연결 상태 확인
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ 
+        error: '데이터베이스 연결이 없습니다.',
+        message: 'MongoDB에 연결할 수 없습니다. 잠시 후 다시 시도해주세요.',
+        dbStatus: mongoose.connection.readyState
+      });
+    }
+
     const todos = await Todo.find().sort({ createdAt: -1 });
     
     res.status(200).json({
@@ -14,15 +23,34 @@ router.get('/todos', async (req, res) => {
     });
   } catch (error) {
     console.error('할일 목록 조회 오류:', error);
-    res.status(500).json({ 
-      error: '서버 오류가 발생했습니다.' 
-    });
+    
+    // 개발 환경에서는 상세한 에러 정보 제공
+    const errorResponse = {
+      error: '서버 오류가 발생했습니다.',
+      message: error.message || '알 수 없는 오류가 발생했습니다.'
+    };
+    
+    // 프로덕션 환경이 아닐 때만 스택 트레이스 포함
+    if (process.env.NODE_ENV !== 'production') {
+      errorResponse.stack = error.stack;
+      errorResponse.details = error;
+    }
+    
+    res.status(500).json(errorResponse);
   }
 });
 
 // 할일 생성 라우터
 router.post('/todos', async (req, res) => {
   try {
+    // MongoDB 연결 상태 확인
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ 
+        error: '데이터베이스 연결이 없습니다.',
+        message: 'MongoDB에 연결할 수 없습니다. 잠시 후 다시 시도해주세요.'
+      });
+    }
+
     const { title, description } = req.body;
 
     // title 필수 검증
@@ -46,9 +74,17 @@ router.post('/todos', async (req, res) => {
     });
   } catch (error) {
     console.error('할일 생성 오류:', error);
-    res.status(500).json({ 
-      error: '서버 오류가 발생했습니다.' 
-    });
+    
+    const errorResponse = {
+      error: '서버 오류가 발생했습니다.',
+      message: error.message || '알 수 없는 오류가 발생했습니다.'
+    };
+    
+    if (process.env.NODE_ENV !== 'production') {
+      errorResponse.stack = error.stack;
+    }
+    
+    res.status(500).json(errorResponse);
   }
 });
 
