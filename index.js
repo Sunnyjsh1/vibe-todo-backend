@@ -44,60 +44,72 @@ if (MONGODB_URI.endsWith('/')) {
   }
 }
 
-// MongoDB Atlas URI인 경우 SSL 파라미터 추가
-if (MONGODB_URI.includes('mongodb+srv://') || MONGODB_URI.includes('mongodb.net')) {
-  // URI에 이미 쿼리 파라미터가 있는지 확인
-  const hasParams = MONGODB_URI.includes('?');
-  if (!hasParams) {
-    MONGODB_URI += '?retryWrites=true&w=majority';
-  } else if (!MONGODB_URI.includes('retryWrites')) {
-    MONGODB_URI += '&retryWrites=true&w=majority';
-  }
+// MongoDB Atlas 연결 문자열인 경우 쿼리 파라미터 추가
+if (MONGODB_URI.includes('mongodb+srv://') && !MONGODB_URI.includes('?')) {
+  // retryWrites와 w=majority 추가 (Atlas 권장 설정)
+  const separator = MONGODB_URI.includes('?') ? '&' : '?';
+  MONGODB_URI = MONGODB_URI + separator + 'retryWrites=true&w=majority';
 }
 
 // MongoDB 연결 옵션
-// MongoDB Atlas (mongodb+srv)는 자동으로 SSL/TLS를 사용하므로 별도 설정 불필요
+// MongoDB Atlas는 TLS/SSL 연결을 요구하므로 옵션 설정
 const mongooseOptions = {
-  serverSelectionTimeoutMS: 30000, // 30초 타임아웃 (Heroku에서 더 긴 시간 필요)
+  serverSelectionTimeoutMS: 30000, // 30초 타임아웃 (Atlas 연결에 충분한 시간)
   socketTimeoutMS: 45000,
+  connectTimeoutMS: 30000,
   // 연결 풀 설정
   maxPoolSize: 10,
-  minPoolSize: 1
+  minPoolSize: 1,
+  // 재시도 설정
+  retryWrites: true,
+  retryReads: true,
 };
 
-// MongoDB 연결 함수 (재시도 로직 포함)
-async function connectMongoDB() {
-  try {
-    await mongoose.connect(MONGODB_URI, mongooseOptions);
+// MongoDB Atlas (mongodb+srv://) 연결인 경우
+// TLS는 기본적으로 활성화되므로 명시적으로 설정하지 않음
+// (URI에 이미 포함되어 있음)
+
+mongoose.connect(MONGODB_URI, mongooseOptions)
+  .then(() => {
     console.log('✅ MongoDB 연결성공');
     if (process.env.NODE_ENV !== 'production') {
       console.log(`연결 URI: ${MONGODB_URI.replace(/\/\/.*@/, '//***:***@')}`);
     }
-  } catch (error) {
+  })
+  .catch((error) => {
     console.error('❌ MongoDB 연결 실패:', error.message);
-    if (error.code === 'ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR' || error.message.includes('SSL')) {
-      console.error('⚠️  SSL/TLS 연결 에러 발생');
-      console.error('⚠️  MongoDB Atlas 네트워크 설정을 확인하세요:');
-      console.error('   1. Network Access에서 0.0.0.0/0 추가 (모든 IP 허용)');
-      console.error('   2. Database Access에서 사용자 권한 확인');
-    }
+    console.error('에러 코드:', error.code);
     if (process.env.NODE_ENV !== 'production') {
       console.error('연결 URI:', MONGODB_URI.replace(/\/\/.*@/, '//***:***@'));
-      console.error('에러 코드:', error.code);
       console.error('전체 에러:', error);
     }
-    console.error('⚠️  서버는 계속 실행되지만 MongoDB 연결이 필요합니다.');
-    console.error('⚠️  10초 후 재시도합니다...');
     
-    // 10초 후 재시도
+    // SSL/TLS 에러인 경우 특별한 안내
+    if (error.code === 'ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR' || 
+        error.message.includes('SSL') || 
+        error.message.includes('TLS')) {
+      console.error('⚠️  SSL/TLS 연결 에러가 발생했습니다.');
+      console.error('⚠️  MongoDB Atlas의 경우:');
+      console.error('   1. IP 화이트리스트에 0.0.0.0/0 (모든 IP) 추가 확인');
+      console.error('   2. 데이터베이스 사용자 권한 확인');
+      console.error('   3. 연결 문자열이 올바른지 확인');
+    }
+    
+    console.error('⚠️  서버는 계속 실행되지만 MongoDB 연결이 필요합니다.');
+    console.error('⚠️  환경 변수 MONGODB_URI가 올바르게 설정되어 있는지 확인하세요.');
+    
+    // 연결 재시도 (30초 후)
     setTimeout(() => {
       console.log('🔄 MongoDB 연결 재시도 중...');
-      connectMongoDB();
-    }, 10000);
-  }
-}
-
-connectMongoDB();
+      mongoose.connect(MONGODB_URI, mongooseOptions)
+        .then(() => {
+          console.log('✅ MongoDB 재연결 성공');
+        })
+        .catch((retryError) => {
+          console.error('❌ 재연결 실패:', retryError.message);
+        });
+    }, 30000);
+  });
 
 // MongoDB 연결 이벤트 리스너
 mongoose.connection.on('connected', () => {
