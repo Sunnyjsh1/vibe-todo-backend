@@ -36,16 +36,18 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/todo';
 mongoose.connect(MONGODB_URI)
   .then(() => {
     console.log('✅ MongoDB 연결성공');
-    console.log(`연결 URI: ${MONGODB_URI}`);
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`연결 URI: ${MONGODB_URI.replace(/\/\/.*@/, '//***:***@')}`);
+    }
   })
   .catch((error) => {
     console.error('❌ MongoDB 연결 실패:', error.message);
-    console.error('연결 URI:', MONGODB_URI);
-    // 연결 실패 시 서버 재시작 (3초 후)
-    setTimeout(() => {
-      console.log('서버를 재시작합니다...');
-      process.exit(1);
-    }, 3000);
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('연결 URI:', MONGODB_URI.replace(/\/\/.*@/, '//***:***@'));
+    }
+    // Heroku에서는 즉시 종료하지 않고 서버는 계속 실행
+    // (MongoDB 연결은 나중에 재시도 가능)
+    console.error('⚠️  서버는 계속 실행되지만 MongoDB 연결이 필요합니다.');
   });
 
 // MongoDB 연결 상태 확인 함수
@@ -85,6 +87,20 @@ app.get('/api/status', (req, res) => {
 // API 라우터 사용 (오직 /api/* 경로만 처리)
 app.use('/api', todoRouter);
 
+// /todos 경로를 /api/todos로 리다이렉트 (호환성을 위해)
+app.get('/todos', (req, res) => {
+  res.redirect('/api/todos');
+});
+
+app.post('/todos', (req, res) => {
+  // POST 요청은 직접 처리할 수 없으므로 404 대신 안내 메시지
+  res.status(404).json({
+    error: 'Not Found',
+    message: 'Please use /api/todos endpoint',
+    correctEndpoint: '/api/todos'
+  });
+});
+
 // ============================================
 // 프론트엔드 정적 파일 제공
 // ============================================
@@ -102,9 +118,6 @@ app.get('/index.html', (req, res) => {
   res.sendFile(path.join(FRONTEND_PATH, 'index.html'));
 });
 
-// API 라우터 사용 (오직 /api/* 경로만 처리)
-app.use('/api', todoRouter);
-
 // 404 핸들러 - 존재하지 않는 경로에 대한 처리
 app.use((req, res) => {
   res.status(404).json({
@@ -121,30 +134,34 @@ app.use((req, res) => {
   });
 });
 
-// 서버 시작 함수 (포트 충돌 시 자동으로 다른 포트 사용)
-function startServer(port) {
-  const server = app.listen(port, () => {
-    if (port !== PORT) {
-      console.log(`⚠️  Port ${PORT} was in use.`);
-    }
-    console.log(`✅ Server is running on http://localhost:${port}`);
-  });
+// 서버 시작
+// Heroku에서는 process.env.PORT를 반드시 사용해야 함
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Server is running on port ${PORT}`);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`📍 Local URL: http://localhost:${PORT}`);
+  }
+});
 
-  server.on('error', (error) => {
-    if (error.code === 'EADDRINUSE') {
-      console.error(`❌ Port ${port} is already in use.`);
-      if (port < PORT + 10) {
-        console.log(`🔄 Trying port ${port + 1}...`);
-        startServer(port + 1);
-      } else {
-        console.error('❌ Could not find an available port. Please close the process using the port.');
+server.on('error', (error) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(`❌ Port ${PORT} is already in use.`);
+    // Heroku가 아닌 경우에만 다른 포트 시도
+    if (process.env.NODE_ENV !== 'production' && !process.env.PORT) {
+      console.log(`🔄 Trying port ${PORT + 1}...`);
+      const newServer = app.listen(PORT + 1, () => {
+        console.log(`✅ Server is running on http://localhost:${PORT + 1}`);
+      });
+      newServer.on('error', (err) => {
+        console.error('❌ Server error:', err);
         process.exit(1);
-      }
+      });
     } else {
-      console.error('❌ Server error:', error);
+      console.error('❌ Could not start server. Port is in use.');
       process.exit(1);
     }
-  });
-}
-
-startServer(PORT);
+  } else {
+    console.error('❌ Server error:', error);
+    process.exit(1);
+  }
+});
